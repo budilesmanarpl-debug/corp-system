@@ -1,0 +1,53 @@
+type User @table {
+  firstName: String!
+  lastName: String!
+  email: String!
+  department: String!
+  role: String!
+  createdAt: Timestamp!
+  phoneNumber: String
+  profilePictureUrl: String
+}
+
+type Project @table {
+  name: String!
+  description: String!
+  startDate: Date!
+  status: String!
+  createdAt: Timestamp!
+  endDate: Date
+}
+
+type Task @table {
+  project: Project!
+  assignee: User
+  title: String!
+  description: String!
+  status: String!
+  priority: String!
+  dueDate: Date!
+  createdAt: Timestamp!
+  completedAt: Timestamp
+}
+
+type ExpenseReport @table {
+  submitter: User!
+  title: String!
+  submissionDate: Date!
+  totalAmount: Float!
+  status: String!
+  createdAt: Timestamp!
+  description: String
+  approvalDate: Date
+  approverId: User
+}
+
+type ExpenseItem @table {
+  expenseReport: ExpenseReport!
+  description: String!
+  amount: Float!
+  category: String!
+  date: Date!
+  createdAt: Timestamp!
+  receiptUrl: String
+}

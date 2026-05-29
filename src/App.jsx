@@ -2817,6 +2817,13 @@ const MasterGenericApp = ({ title, apiPath, data, setData, addLog, user, templat
   const handleSubmit = async (e) => {
     e.preventDefault();
     const payload = { code, name, description, modify_by: user.name };
+    const payload = { 
+      code, 
+      name, 
+      description, 
+      modify_by: user.name,
+      modify_date: serverTimestamp() // Menggunakan serverTimestamp untuk konsistensi
+    };
     setIsLoading(true);
     try {
       const url = editingId ? `${API_BASE_URL}/${apiPath}/${editingId}` : `${API_BASE_URL}/${apiPath}`;
@@ -2837,7 +2844,18 @@ const MasterGenericApp = ({ title, apiPath, data, setData, addLog, user, templat
         setMsg('Data berhasil disimpan.');
         setIsFormOpen(false); setEditingId(null); setCode(''); setName(''); setDesc('');
         setTimeout(() => setMsg(''), 3000);
+      if (editingId) {
+        await updateDoc(doc(db, apiPath, editingId), payload);
+        setData(prev => prev.map(d => d.id === editingId ? { ...payload, id: editingId } : d));
+        addLog('UPDATE', title, name);
+      } else {
+        const docRef = await addDoc(collection(db, apiPath), payload);
+        setData(prev => [{ ...payload, id: docRef.id }, ...prev]);
+        addLog('CREATE', title, name);
       }
+      setMsg('Data berhasil disimpan.');
+      setIsFormOpen(false); setEditingId(null); setCode(''); setName(''); setDesc('');
+      setTimeout(() => setMsg(''), 3000);
     } catch (err) { console.error(err); }
     finally { setIsLoading(false); }
   };
@@ -2850,6 +2868,7 @@ const MasterGenericApp = ({ title, apiPath, data, setData, addLog, user, templat
       const lines = evt.target.result.split(/\r?\n/).filter(l => l.trim().length > 0);
       if (lines.length <= 1) return;
       const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+      const newItems = [];
       for (let i = 1; i < lines.length; i++) {
         const cols = lines[i].split(',').map(c => c.trim());
         const row = {}; headers.forEach((h, idx) => row[h] = cols[idx]);
@@ -2858,10 +2877,18 @@ const MasterGenericApp = ({ title, apiPath, data, setData, addLog, user, templat
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ ...row, modify_by: user.name })
+          const docRef = await addDoc(collection(db, apiPath), { 
+            ...row, 
+            modify_by: user.name, 
+            modify_date: serverTimestamp() 
           });
+          newItems.push({ ...row, id: docRef.id, modify_by: user.name, modify_date: new Date().toISOString() });
         }
       }
       window.location.reload(); // Refresh sederhana untuk tarik data baru
+      setData(prev => [...newItems, ...prev]);
+      addLog('CREATE', title, `Import ${newItems.length} data`);
+      setMsg('Data berhasil diimpor.');
     };
     reader.readAsText(file);
   };
@@ -2909,6 +2936,7 @@ const MasterGenericApp = ({ title, apiPath, data, setData, addLog, user, templat
                 <td className="px-6 py-4 text-right">
                   <button onClick={() => { setEditingId(d.id); setCode(d.code); setName(d.name); setDesc(d.description || ''); setIsFormOpen(true); }} className="text-blue-600 mr-3"><Edit2 className="w-4 h-4 inline"/></button>
                   <button onClick={async () => { if(confirm('Hapus data?')) { await fetch(`${API_BASE_URL}/${apiPath}/${d.id}`, { method: 'DELETE' }); setData(data.filter(x => x.id !== d.id)); addLog('DELETE', title, d.name); } }} className="text-red-600"><Trash2 className="w-4 h-4 inline"/></button>
+                  <button onClick={async () => { if(confirm('Hapus data?')) { await deleteDoc(doc(db, apiPath, d.id)); setData(data.filter(x => x.id !== d.id)); addLog('DELETE', title, d.name); } }} className="text-red-600"><Trash2 className="w-4 h-4 inline"/></button>
                 </td>
               </tr>
             ))}
@@ -3564,6 +3592,12 @@ export default function App() {
         const snapshotLogs = await getDocs(query(collection(db, "audit_logs"), orderBy("modify_date", "desc"), limit(100)));
         setAuditLogs(snapshotLogs.docs.map(doc => ({ id: doc.id, ...doc.data() })));
 
+        // Fetch GL Accounts
+        const snapshotGlAccounts = await getDocs(collection(db, "gl-accounts"));
+        setGlAccounts(snapshotGlAccounts.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        // Fetch Cost Centers
+        const snapshotCostCenters = await getDocs(collection(db, "cost-centers"));
+        setCostCenters(snapshotCostCenters.docs.map(doc => ({ id: doc.id, ...doc.data() })));
       } catch (err) {
         console.error("Gagal mengambil data dari Firebase:", err);
       }
