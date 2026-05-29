@@ -1,5 +1,19 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
+  collection, 
+  addDoc, 
+  getDocs, 
+  updateDoc, 
+  deleteDoc, 
+  doc, 
+  query, 
+  orderBy, 
+  limit,
+  serverTimestamp 
+} from "firebase/firestore";
+import { db } from "./firebase";
+
+import { 
   Newspaper, 
   ShieldCheck, 
   LogOut, 
@@ -31,7 +45,11 @@ import {
   FolderOpen,
   Search,
   RefreshCw,
-  History
+  History,
+  Calculator,
+  ChevronDown,
+  Calendar,
+  Printer
 } from 'lucide-react';
 
 // --- KONFIGURASI SESI ---
@@ -161,12 +179,12 @@ const INITIAL_ROLE_ACCESS = {
   'administrator': [
     'dashboard_home', 'dashboard_news', 'dashboard_docs', 'dashboard_approval', 
     'master_department', 'master_approval_type', 'master_employee', 
-    'dashboard_routing', 'master_role_access'
+    'dashboard_routing', 'master_role_access', 'master_gl_account', 'master_cost_center', 'dashboard_event', 'dashboard_logs'
   ],
   'Director': ['dashboard_home', 'dashboard_approval', 'dashboard_routing', 'dashboard_docs'],
-  'Manager': ['dashboard_home', 'dashboard_approval', 'dashboard_docs'],
-  'Supervisor': ['dashboard_home', 'dashboard_approval'],
-  'Staff': ['dashboard_home', 'dashboard_approval'],
+  'Manager': ['dashboard_home', 'dashboard_approval', 'dashboard_docs', 'master_gl_account', 'master_cost_center'],
+  'Supervisor': ['dashboard_home', 'dashboard_approval', 'master_gl_account', 'master_cost_center'],
+  'Staff': ['dashboard_home', 'dashboard_approval', 'master_gl_account', 'master_cost_center'],
 };
 
 const ALL_MENUS = [
@@ -174,10 +192,20 @@ const ALL_MENUS = [
   { id: 'dashboard_news', label: 'Manajemen Berita', icon: <Newspaper className="w-5 h-5" /> },
   { id: 'dashboard_docs', label: 'Form & Prosedur', icon: <FolderOpen className="w-5 h-5" /> },
   { id: 'dashboard_approval', label: 'Sistem Approval', icon: <FileText className="w-5 h-5" /> },
-  { id: 'master_department', label: 'Master Departemen', icon: <Building className="w-5 h-5" /> },
-  { id: 'master_approval_type', label: 'Master Tipe Approval', icon: <Tags className="w-5 h-5" /> },
-  { id: 'master_employee', label: 'Master Karyawan', icon: <UserCircle className="w-5 h-5" /> },
-  { id: 'dashboard_routing', label: 'Master Routing PIC', icon: <GitMerge className="w-5 h-5" /> },
+  { id: 'dashboard_event', label: 'Manajemen Event', icon: <Calendar className="w-5 h-5" /> },
+  { 
+    id: 'master_maintain', 
+    label: 'Master Maintain', 
+    icon: <ShieldCheck className="w-5 h-5" />,
+    children: [
+      { id: 'master_department', label: 'Master Departemen', icon: <Building className="w-5 h-5" /> },
+      { id: 'master_approval_type', label: 'Master Tipe Approval', icon: <Tags className="w-5 h-5" /> },
+      { id: 'master_employee', label: 'Master Karyawan', icon: <UserCircle className="w-5 h-5" /> },
+      { id: 'master_gl_account', label: 'Master GL Account', icon: <Calculator className="w-5 h-5" /> },
+      { id: 'master_cost_center', label: 'Master Cost Center', icon: <Building className="w-5 h-5" /> },
+      { id: 'dashboard_routing', label: 'Master Routing PIC', icon: <GitMerge className="w-5 h-5" /> },
+    ]
+  },
   { id: 'master_role_access', label: 'Role Access (Hak Akses)', icon: <Lock className="w-5 h-5" /> },
   { id: 'dashboard_logs', label: 'Log Perubahan', icon: <History className="w-5 h-5" /> },
 ];
@@ -203,9 +231,9 @@ const PublicNavbar = ({ onNavigate, onLoginClick }) => (
   </nav>
 );
 
-const PortalPage = ({ news, procedures, departments, onNavigate, onLoginClick }) => {
+const PortalPage = ({ news, procedures, departments, events, onNavigate, onLoginClick }) => {
   const [selectedNews, setSelectedNews] = useState(null);
-  const [activeTab, setActiveTab] = useState('berita'); // 'berita' atau 'prosedur'
+  const [activeTab, setActiveTab] = useState('berita'); 
   const [selectedDept, setSelectedDept] = useState('Semua Departemen');
   const [searchQuery, setSearchQuery] = useState('');
   const [downloadAlert, setDownloadAlert] = useState(null);
@@ -226,8 +254,8 @@ const PortalPage = ({ news, procedures, departments, onNavigate, onLoginClick })
 
   const filteredProcedures = procedures.filter(proc => {
     const matchesDept = selectedDept === 'Semua Departemen' || proc.department === selectedDept;
-    const matchesSearch = proc.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                          proc.description.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesSearch = (proc.title || "").toLowerCase().includes(searchQuery.toLowerCase()) || 
+                          (proc.description || "").toLowerCase().includes(searchQuery.toLowerCase());
     return matchesDept && matchesSearch;
   });
 
@@ -316,6 +344,12 @@ const PortalPage = ({ news, procedures, departments, onNavigate, onLoginClick })
           >
             Form & Prosedur Publik
           </button>
+          <button 
+            onClick={() => setActiveTab('kalender')}
+            className={`py-4 px-4 font-bold text-sm border-b-2 transition-colors ${activeTab === 'kalender' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
+          >
+            Kalender Event
+          </button>
         </div>
       </div>
 
@@ -380,7 +414,7 @@ const PortalPage = ({ news, procedures, departments, onNavigate, onLoginClick })
             {/* Kontrol Pagination Berita */}
             <Pagination current={pageNews} total={totalPagesNews} onChange={setPageNews} />
           </div>
-        ) : (
+        ) : activeTab === 'prosedur' ? (
           /* Tampilan Form & Prosedur Publik */
           <div>
             <div className="text-center mb-10">
@@ -476,6 +510,11 @@ const PortalPage = ({ news, procedures, departments, onNavigate, onLoginClick })
               </div>
             </div>
           </div>
+        ) : (
+          /* Tampilan Kalender Event Widget */
+          <div className="animate-fadeIn">
+             <EventCalendarWidget events={events} />
+          </div>
         )}
       </div>
 
@@ -525,6 +564,172 @@ const PortalPage = ({ news, procedures, departments, onNavigate, onLoginClick })
         <p>&copy; 2026 Portal Corporate. All rights reserved.</p>
         <p className="mt-1">Secure Internal Network</p>
       </footer>
+    </div>
+  );
+};
+
+// --- WIDGET KALENDER EVENT (PORTAL VIEW) ---
+const EventCalendarWidget = ({ events }) => {
+  const [currentDate, setCurrentDate] = useState(new Date());
+  const [selectedDateStr, setSelectedDateStr] = useState(new Date().toISOString().split('T')[0]);
+
+  const monthNames = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+  
+  const curMonth = currentDate.getMonth();
+  const curYear = currentDate.getFullYear();
+
+  const daysInMonth = new Date(curYear, curMonth + 1, 0).getDate();
+  const firstDay = new Date(curYear, curMonth, 1).getDay();
+
+  const dayEvents = (events || []).filter(e => {
+    const d = new Date(e.event_date);
+    return d.toISOString().split('T')[0] === selectedDateStr;
+  });
+
+  const changeMonth = (offset) => {
+    setCurrentDate(new Date(curYear, curMonth + offset, 1));
+  };
+
+  return (
+    <div className="w-full max-w-5xl mx-auto bg-white rounded-2xl shadow-xl overflow-hidden border border-slate-100 flex flex-col md:flex-row min-h-[500px]">
+      <div className="w-full md:w-3/5 p-6 border-b md:border-b-0 md:border-r border-slate-100">
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex flex-col">
+            <span className="text-xs font-bold uppercase tracking-wider text-blue-600">{curYear}</span>
+            <h2 className="text-2xl font-bold text-slate-800">{monthNames[curMonth]}</h2>
+          </div>
+          <div className="flex space-x-2">
+            <button onClick={() => changeMonth(-1)} className="p-2 hover:bg-slate-100 rounded-lg"><ChevronRight className="w-5 h-5 rotate-180"/></button>
+            <button onClick={() => setCurrentDate(new Date())} className="px-3 py-1 text-xs font-bold bg-blue-50 text-blue-600 rounded-lg">Hari Ini</button>
+            <button onClick={() => changeMonth(1)} className="p-2 hover:bg-slate-100 rounded-lg"><ChevronRight className="w-5 h-5"/></button>
+          </div>
+        </div>
+        <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-bold text-slate-400 uppercase mb-2">
+          {['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'].map(d => <div key={d}>{d}</div>)}
+        </div>
+        <div className="grid grid-cols-7 gap-1">
+          {[...Array(firstDay)].map((_, i) => <div key={i} />)}
+          {[...Array(daysInMonth)].map((_, i) => {
+            const dStr = `${curYear}-${String(curMonth + 1).padStart(2, '0')}-${String(i + 1).padStart(2, '0')}`;
+            const hasEvt = events.some(e => e.event_date.startsWith(dStr));
+            return (
+              <button 
+                key={i} 
+                onClick={() => setSelectedDateStr(dStr)}
+                className={`h-12 rounded-xl flex flex-col items-center justify-center transition-all ${selectedDateStr === dStr ? 'bg-slate-800 text-white shadow-lg scale-105' : 'hover:bg-slate-50 text-slate-700'}`}
+              >
+                <span className="text-sm font-bold">{i + 1}</span>
+                {hasEvt && <div className="w-1 h-1 bg-blue-500 rounded-full mt-1"></div>}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      <div className="w-full md:w-2/5 p-6 bg-slate-50/50">
+        <div className="border-b border-slate-200 pb-4 mb-4">
+           <span className="text-xs font-bold text-slate-400 uppercase">Agenda {selectedDateStr}</span>
+        </div>
+        <div className="space-y-3">
+          {dayEvents.map(evt => (
+            <div key={evt.id} className={`p-4 rounded-xl border bg-white shadow-sm border-l-4 ${evt.color === 'rose' ? 'border-l-rose-500' : evt.color === 'emerald' ? 'border-l-emerald-500' : 'border-l-blue-500'}`}>
+              <div className="flex justify-between items-start mb-1">
+                <h4 className="font-bold text-slate-800 text-sm">{evt.title}</h4>
+                <span className="text-[10px] font-bold px-2 py-0.5 bg-slate-100 rounded text-slate-500">{evt.event_time || 'Seharian'}</span>
+              </div>
+              <p className="text-xs text-slate-500 leading-relaxed">{evt.description}</p>
+            </div>
+          ))}
+          {dayEvents.length === 0 && (
+            <div className="text-center py-10">
+              <Calendar className="w-10 h-10 text-slate-200 mx-auto mb-2" />
+              <p className="text-xs text-slate-400 font-medium">Tidak ada agenda terdaftar.</p>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// --- DASHBOARD COMPONENT: MANAJEMEN EVENT (CRUD) ---
+const EventManagerApp = ({ events, setEvents, addLog, user }) => {
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [title, setTitle] = useState('');
+  const [date, setDate] = useState('');
+  const [time, setTime] = useState('');
+  const [color, setColor] = useState('indigo');
+  const [desc, setDesc] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    const payload = { title, description: desc, event_date: date, event_time: time, color, modify_by: user.name };
+    setIsLoading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/events`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setEvents(prev => [...prev, { ...payload, id: data.id }]);
+        addLog('CREATE', 'Manajemen Event', title);
+        setIsFormOpen(false); setTitle(''); setDate(''); setTime(''); setDesc('');
+      } else {
+        alert("Gagal menyimpan event. Periksa koneksi backend.");
+      }
+    } catch (err) { console.error(err); }
+    finally { setIsLoading(false); }
+  };
+
+  return (
+    <div className="p-6">
+      <div className="flex justify-between items-center mb-6">
+        <h2 className="text-2xl font-bold text-slate-800">Manajemen Event Kalender</h2>
+        <button onClick={() => setIsFormOpen(!isFormOpen)} className="bg-blue-600 text-white px-4 py-2 rounded-md text-sm font-bold">
+          {isFormOpen ? 'Batal' : '+ Tambah Event'}
+        </button>
+      </div>
+      {isFormOpen && (
+        <form onSubmit={handleSubmit} className="bg-white p-6 rounded-xl border shadow-sm mb-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="md:col-span-2">
+            <label className="text-xs font-bold text-slate-500 uppercase">Nama Kegiatan</label>
+            <input required value={title} onChange={e => setTitle(e.target.value)} className="w-full px-3 py-2 border rounded-md" placeholder="Contoh: Rapat Koordinasi" />
+          </div>
+          <div><label className="text-xs font-bold text-slate-500 uppercase">Tanggal</label><input type="date" required value={date} onChange={e => setDate(e.target.value)} className="w-full px-3 py-2 border rounded-md" /></div>
+          <div><label className="text-xs font-bold text-slate-500 uppercase">Waktu</label><input type="time" value={time} onChange={e => setTime(e.target.value)} className="w-full px-3 py-2 border rounded-md" /></div>
+          <div>
+            <label className="text-xs font-bold text-slate-500 uppercase">Warna Label</label>
+            <select value={color} onChange={e => setColor(e.target.value)} className="w-full px-3 py-2 border rounded-md bg-white">
+              <option value="indigo">Indigo (Umum)</option><option value="emerald">Emerald (Kerja)</option><option value="rose">Rose (Penting)</option>
+            </select>
+          </div>
+          <div className="md:col-span-2">
+            <label className="text-xs font-bold text-slate-500 uppercase">Deskripsi</label>
+            <textarea value={desc} onChange={e => setDesc(e.target.value)} className="w-full px-3 py-2 border rounded-md" rows="2"></textarea>
+          </div>
+          <button type="submit" disabled={isLoading} className="md:col-span-2 bg-green-600 hover:bg-green-700 text-white py-2 rounded-md font-bold disabled:bg-slate-300">
+            {isLoading ? 'Menyimpan...' : 'Simpan ke Kalender'}
+          </button>
+        </form>
+      )}
+      <div className="bg-white rounded-xl border overflow-hidden">
+        <table className="w-full text-left">
+          <thead className="bg-slate-50 text-xs font-bold text-slate-500 uppercase"><tr><th className="px-6 py-3">Event</th><th className="px-6 py-3">Tanggal</th><th className="px-6 py-3 text-right">Aksi</th></tr></thead>
+          <tbody className="divide-y text-sm">
+            {events.map(e => (
+              <tr key={e.id} className="hover:bg-slate-50">
+                <td className="px-6 py-4 font-bold">{e.title}</td>
+                <td className="px-6 py-4">{e.event_date} {e.event_time}</td>
+                <td className="px-6 py-4 text-right">
+                  <button onClick={async () => { if(confirm('Hapus?')) { await fetch(`${API_BASE_URL}/events/${e.id}`, {method: 'DELETE'}); setEvents(events.filter(x => x.id !== e.id)); addLog('DELETE', 'Manajemen Event', e.title); } }} className="text-red-500"><Trash2 className="w-4 h-4"/></button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 };
@@ -947,15 +1152,15 @@ const NewsManagerApp = ({ news, setNews, addLog, user }) => {
             {/* Unggah Gambar Cover Berita */}
             <div className="mb-4">
               <label className="block text-sm font-medium text-slate-700 mb-1.5">Gambar Cover Berita</label>
-              <div className="flex flex-col items-center justify-center border-2 border-dashed border-slate-300 hover:border-blue-500 rounded-lg p-5 cursor-pointer transition-colors bg-slate-50 relative">
+              <label className="flex flex-col items-center justify-center border-2 border-dashed border-slate-300 hover:border-blue-500 rounded-lg p-5 cursor-pointer transition-colors bg-slate-50 relative">
                 <input 
                   type="file" 
                   accept="image/*" 
                   onChange={handleImageUpload} 
-                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" 
+                  className="hidden" 
                 />
                 {image ? (
-                  <div className="flex flex-col items-center gap-2 text-center relative z-20">
+                  <div className="flex flex-col items-center gap-2 text-center relative">
                     <img 
                       src={image} 
                       alt="Pratinjau Berita" 
@@ -978,13 +1183,13 @@ const NewsManagerApp = ({ news, setNews, addLog, user }) => {
                     </button>
                   </div>
                 ) : (
-                  <div className="text-center relative z-20">
+                  <div className="text-center relative">
                     <ImageIcon className="w-10 h-10 text-slate-400 mx-auto mb-2" />
                     <span className="text-sm text-slate-600 font-semibold block">Klik untuk Unggah Gambar Cover</span>
                     <span className="text-xs text-slate-400">Mendukung format gambar JPEG, PNG, WEBP</span>
                   </div>
                 )}
-              </div>
+              </label>
             </div>
 
             <div className="mb-6">
@@ -1341,7 +1546,7 @@ const FormProcedureManagerApp = ({ procedures, setProcedures, departments, addLo
 };
 
 // --- APLIKASI UTAMA APPROVAL ---
-const ApprovalSystemApp = ({ approvals, setApprovals, user, approvalTypes, routings, addLog }) => {
+const ApprovalSystemApp = ({ approvals, setApprovals, user, approvalTypes, routings, glAccounts, costCenters, employees, addLog }) => {
   const [notification, setNotification] = useState(null);
   const [errorBanner, setErrorBanner] = useState('');
   
@@ -1350,8 +1555,15 @@ const ApprovalSystemApp = ({ approvals, setApprovals, user, approvalTypes, routi
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [formType, setFormType] = useState('');
+  const [formAmount, setFormAmount] = useState('');
+  const [formGL, setFormGL] = useState('');
+  const [formCostCenter, setFormCostCenter] = useState('');
   const [actionComments, setActionComments] = useState({}); // State untuk menampung input komentar per item
   const [formDesc, setFormDesc] = useState('');
+  const [glSearch, setGlSearch] = useState('');
+  const [ccSearch, setCcSearch] = useState('');
+  const [showGlDropdown, setShowGlDropdown] = useState(false);
+  const [showCcDropdown, setShowCcDropdown] = useState(false);
   const [formFile, setFormFile] = useState(null);
 
   const handleFileChange = (e) => {
@@ -1397,55 +1609,51 @@ const ApprovalSystemApp = ({ approvals, setApprovals, user, approvalTypes, routi
       return;
     }
 
-    if (editingId) {
-      const updatedList = approvals.map(app => {
-        if (app.id === editingId) {
-          return {
-            ...app,
-            type: formType,
-            description: formDesc,
-            attachment: formFile || app.attachment
-          };
-        }
-        return app;
+    const matchedRoute = routings.find(r => 
+      r.approvalType === formType && 
+      (r.department === user.department || r.department === 'Lintas Departemen')
+    );
+
+    const routingPath = matchedRoute ? matchedRoute.path.map(step => ({
+      level: step.level,
+      role: step.role,
+      pic: step.pic,
+      email: `${step.pic.toLowerCase().replace(/\s+/g, '')}@corp.com`
+    })) : [
+      { level: 1, role: "Supervisor", pic: "Siti Aminah", email: "siti.aminah@corp.com" },
+      { level: 2, role: "Manager", pic: "Budi Santoso", email: "budi.santoso@corp.com" }
+    ];
+
+    const requestData = {
+      type: formType,
+      requester: user.name,
+      description: formDesc,
+      status: 'Pending',
+      date: new Date().toISOString().split('T')[0],
+      path: routingPath,
+      attachment: formFile,
+      amount: parseFloat(formAmount) || 0,
+      gl_account: formGL,
+      cost_center: formCostCenter
+    };
+
+    const createApproval = async () => {
+      const docRef = await addDoc(collection(db, "approvals"), {
+        ...requestData,
+        timestamp: serverTimestamp()
       });
-      setApprovals(updatedList);
-      addLog('UPDATE', 'Sistem Approval', `Edit draft: ${formType}`);
-      setNotification('Pengajuan berhasil diperbarui!');
-    } else {
-      const matchedRoute = routings.find(r => 
-        r.approvalType === formType && 
-        (r.department === user.department || r.department === 'Lintas Departemen')
-      );
-
-      const routingPath = matchedRoute ? matchedRoute.path.map(step => ({
-        level: step.level,
-        role: step.role,
-        pic: step.pic,
-        email: `${step.pic.toLowerCase().replace(/\s+/g, '')}@corp.com`
-      })) : [
-        { level: 1, role: "Supervisor", pic: "Siti Aminah", email: "siti.aminah@corp.com" },
-        { level: 2, role: "Manager", pic: "Budi Santoso", email: "budi.santoso@corp.com" }
-      ];
-
-      const newRequest = {
-        id: Date.now(),
-        type: formType,
-        requester: user.name,
-        description: formDesc,
-        status: 'Pending',
-        date: new Date().toISOString().split('T')[0],
-        currentStepIndex: 0,
-        path: routingPath,
-        attachment: formFile
-      };
-
-      setApprovals([newRequest, ...approvals]);
-      addLog('CREATE', 'Sistem Approval', `Pengajuan baru: ${formType}`);
-      setNotification(`Pengajuan berhasil dibuat! Email dikirim ke PIC tahap 1: ${routingPath[0].email}`);
-    }
+      setApprovals([{ ...requestData, id: docRef.id }, ...approvals]);
+      addLog('CREATE', 'Sistem Approval', `Pengajuan: ${formType}`);
+      setNotification(`Pengajuan berhasil dikirim.`);
+    };
+    createApproval();
 
     setFormType('');
+    setFormAmount('');
+    setFormGL('');
+    setGlSearch('');
+    setFormCostCenter('');
+    setCcSearch('');
     setFormDesc('');
     setFormFile(null);
     setEditingId(null);
@@ -1461,8 +1669,18 @@ const ApprovalSystemApp = ({ approvals, setApprovals, user, approvalTypes, routi
     }
     setEditingId(item.id);
     setFormType(item.type);
+    setFormAmount(item.amount || '');
     setFormDesc(item.description);
     setFormFile(item.attachment);
+    
+    const gl = glAccounts.find(g => g.code === item.gl_account);
+    setGlSearch(gl ? `${gl.code} - ${gl.name}` : item.gl_account || '');
+    setFormGL(item.gl_account || '');
+
+    const cc = costCenters.find(c => c.code === item.cost_center);
+    setCcSearch(cc ? `${cc.code} - ${cc.name}` : item.cost_center || '');
+    setFormCostCenter(item.cost_center || '');
+
     setIsFormOpen(true);
   };
 
@@ -1497,6 +1715,16 @@ const ApprovalSystemApp = ({ approvals, setApprovals, user, approvalTypes, routi
     updatedItem.lastComment = comment; // Menyimpan komentar terakhir
 
     if (newStatus === 'Approved') {
+      // Catat waktu approval di step saat ini untuk laporan
+      const updatedPath = [...(item.path || [])];
+      if (updatedPath[item.currentStepIndex]) {
+        updatedPath[item.currentStepIndex] = {
+          ...updatedPath[item.currentStepIndex],
+          approvedAt: new Date().toISOString()
+        };
+      }
+      updatedItem.path = updatedPath;
+
       if (item.path && item.currentStepIndex < item.path.length - 1) {
         updatedItem.currentStepIndex += 1;
         const nextPic = updatedItem.path[updatedItem.currentStepIndex];
@@ -1522,6 +1750,95 @@ const ApprovalSystemApp = ({ approvals, setApprovals, user, approvalTypes, routi
     const newApprovals = [...approvals];
     newApprovals[itemIndex] = updatedItem;
     setApprovals(newApprovals);
+  };
+
+  const handlePrint = (item) => {
+    const printWindow = window.open('', '_blank');
+    const htmlContent = `
+      <html>
+        <head>
+          <title>Approval Report - REQ-${item.id}</title>
+          <style>
+            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 40px; color: #333; line-height: 1.6; }
+            .header { text-align: center; border-bottom: 3px solid #1e3a8a; padding-bottom: 15px; margin-bottom: 25px; }
+            .header h1 { margin: 0; color: #1e3a8a; font-size: 24px; text-transform: uppercase; letter-spacing: 1px; }
+            .section { margin-bottom: 25px; }
+            .section-title { font-weight: 800; font-size: 13px; text-transform: uppercase; color: #475569; margin-bottom: 12px; border-bottom: 1px solid #cbd5e1; padding-bottom: 4px; }
+            .grid { display: grid; grid-template-columns: 180px 1fr; gap: 8px; font-size: 14px; }
+            .label { font-weight: 600; color: #64748b; }
+            table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+            th { background-color: #f1f5f9; text-align: left; padding: 10px; border: 1px solid #cbd5e1; font-size: 11px; color: #334155; text-transform: uppercase; }
+            td { padding: 10px; border: 1px solid #cbd5e1; font-size: 13px; vertical-align: middle; }
+            .sig-img { height: 55px; width: auto; display: block; margin: 0 auto; }
+            .footer { margin-top: 40px; text-align: right; font-size: 10px; color: #94a3b8; border-top: 1px solid #f1f5f9; padding-top: 10px; }
+            @media print { .no-print { display: none; } }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1>Approval System Report</h1>
+            <p style="margin: 5px 0 0 0; font-size: 12px; color: #64748b;">Dokumen Ringkasan Persetujuan Digital</p>
+          </div>
+          
+          <div class="section">
+            <div class="section-title">Detail Pengajuan</div>
+            <div class="grid">
+              <div class="label">Nomor Pengajuan</div><div>REQ-${item.id}</div>
+              <div class="label">Tanggal Dibuat</div><div>${item.date}</div>
+              <div class="label">Nama Pengaju</div><div>${item.requester}</div>
+              <div class="label">Tipe Approval</div><div>${item.type}</div>
+              <div class="label">Nilai (Amount)</div><div>${new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(item.amount || 0)}</div>
+              <div class="label">GL Account / CC</div><div>${item.gl_account || '-'} / ${item.cost_center || '-'}</div>
+              <div class="label">Keterangan</div><div>${item.description}</div>
+              <div class="label">Status Akhir</div><div><strong>${item.status.toUpperCase()}</strong></div>
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="section-title">Jalur Persetujuan & Spesimen Tanda Tangan</div>
+            <table>
+              <thead>
+                <tr>
+                  <th style="width: 40px; text-align: center;">Lvl</th>
+                  <th>Posisi / Role</th>
+                  <th>Nama PIC Penyetuju</th>
+                  <th>Tanggal & Jam Approved</th>
+                  <th style="width: 160px; text-align: center;">Tanda Tangan</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${(item.path || []).map((step, index) => {
+                  const isApproved = index < item.currentStepIndex || item.status === 'Approved';
+                  const picEmp = employees.find(e => e.name === step.pic);
+                  const signature = picEmp?.signature;
+
+                  return `
+                    <tr>
+                      <td style="text-align: center;">${step.level}</td>
+                      <td>${step.role}</td>
+                      <td>${step.pic}</td>
+                      <td>${isApproved ? (step.approvedAt ? new Date(step.approvedAt).toLocaleString('id-ID') : '-') : '-'}</td>
+                      <td style="text-align: center;">
+                        ${isApproved && signature ? `<img src="${signature}" class="sig-img" />` : isApproved ? '<span style="color: #cbd5e1; font-size: 10px;">Digital Signature</span>' : '-'}
+                      </td>
+                    </tr>
+                  `;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+
+          <div class="footer">
+            Laporan ini dicetak oleh ${user.name} pada ${new Date().toLocaleString('id-ID')} &bull; Sistem Audit Internal
+          </div>
+        </body>
+      </html>
+    `;
+    printWindow.document.write(htmlContent);
+    printWindow.document.close();
+    setTimeout(() => {
+      printWindow.print();
+    }, 600);
   };
 
   const myRequests = approvals.filter(a => a.requester === user.name);
@@ -1602,8 +1919,9 @@ const ApprovalSystemApp = ({ approvals, setApprovals, user, approvalTypes, routi
           </h3>
           <form onSubmit={handleCreateOrUpdateApproval}>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-              <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-1">Tipe Approval</label>
+              <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1">Tipe Approval</label>
                 <select 
                   required
                   value={formType} 
@@ -1616,7 +1934,93 @@ const ApprovalSystemApp = ({ approvals, setApprovals, user, approvalTypes, routi
                   ))}
                 </select>
               </div>
-              
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1">Amount (Nilai)</label>
+                  <input 
+                    type="number" required
+                    value={formAmount} onChange={(e) => setFormAmount(e.target.value)}
+                    className="w-full px-4 py-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/50"
+                    placeholder="0.00"
+                  />
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  <div className="relative">
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-tighter">GL Account Selection</label>
+                    <input 
+                      type="text" 
+                      required 
+                      placeholder="Cari & Pilih GL..."
+                      value={glSearch}
+                      onFocus={() => setShowGlDropdown(true)}
+                      onChange={(e) => {
+                        setGlSearch(e.target.value);
+                        setShowGlDropdown(true);
+                        if (formGL) setFormGL(''); 
+                      }}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs outline-none focus:ring-1 focus:ring-blue-500 bg-white"
+                    />
+                    {showGlDropdown && (
+                      <div className="absolute z-[100] w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-xl max-h-48 overflow-y-auto">
+                        {glAccounts.filter(gl => 
+                          gl.code.toLowerCase().includes(glSearch.toLowerCase()) || 
+                          gl.name.toLowerCase().includes(glSearch.toLowerCase())
+                        ).map(gl => (
+                          <button
+                            key={gl.id}
+                            type="button"
+                            onClick={() => {
+                              setFormGL(gl.code);
+                              setGlSearch(`${gl.code} - ${gl.name}`);
+                              setShowGlDropdown(false);
+                            }}
+                            className="w-full text-left px-3 py-2 text-[11px] hover:bg-blue-50 border-b border-slate-100 last:border-none"
+                          >
+                            <span className="font-bold text-blue-700">{gl.code}</span> &bull; {gl.name}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="relative">
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-tighter">Cost Center Selection</label>
+                    <input 
+                      type="text" 
+                      required 
+                      placeholder="Cari & Pilih CC..."
+                      value={ccSearch}
+                      onFocus={() => setShowCcDropdown(true)}
+                      onChange={(e) => {
+                        setCcSearch(e.target.value);
+                        setShowCcDropdown(true);
+                        if (formCostCenter) setFormCostCenter('');
+                      }}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs outline-none focus:ring-1 focus:ring-blue-500 bg-white"
+                    />
+                    {showCcDropdown && (
+                      <div className="absolute z-[100] w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-xl max-h-48 overflow-y-auto">
+                        {costCenters.filter(cc => 
+                          cc.code.toLowerCase().includes(ccSearch.toLowerCase()) || 
+                          cc.name.toLowerCase().includes(ccSearch.toLowerCase())
+                        ).map(cc => (
+                          <button
+                            key={cc.id}
+                            type="button"
+                            onClick={() => {
+                              setFormCostCenter(cc.code);
+                              setCcSearch(`${cc.code} - ${cc.name}`);
+                              setShowCcDropdown(false);
+                            }}
+                            className="w-full text-left px-3 py-2 text-[11px] hover:bg-blue-50 border-b border-slate-100 last:border-none"
+                          >
+                            <span className="font-bold text-amber-700">{cc.code}</span> &bull; {cc.name}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
               <div>
                 <label className="block text-sm font-semibold text-slate-700 mb-1">Unggah Dokumen Lampiran <span className="text-xs font-normal text-slate-400">(Hanya PDF / ZIP)</span></label>
                 <div className="flex items-center gap-3">
@@ -1747,6 +2151,13 @@ const ApprovalSystemApp = ({ approvals, setApprovals, user, approvalTypes, routi
                     )}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                    <button 
+                      onClick={() => handlePrint(item)}
+                      className="text-slate-600 hover:text-slate-900 bg-slate-100 p-1.5 rounded-lg mr-2" 
+                      title="Print Approval Report"
+                    >
+                      <Printer className="w-4 h-4" />
+                    </button>
                     {item.status === 'Pending' ? (
                       <div className="flex justify-end gap-2">
                         <button 
@@ -1837,6 +2248,13 @@ const ApprovalSystemApp = ({ approvals, setApprovals, user, approvalTypes, routi
                     )}
                   </td>
                   <td className="px-6 py-4 text-right">
+                    <button 
+                      onClick={() => handlePrint(item)}
+                      className="text-slate-600 hover:text-slate-900 bg-slate-100 p-1.5 rounded-lg mb-2" 
+                      title="Cetak Laporan"
+                    >
+                      <Printer className="w-4 h-4" />
+                    </button>
                     <div className="mb-3">
                       <input 
                         type="text" 
@@ -2029,6 +2447,7 @@ const MasterEmployeeApp = ({ employees, setEmployees, departments, addLog }) => 
   const [role, setRole] = useState('Staff');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [signature, setSignature] = useState('');
   const [successBanner, setSuccessBanner] = useState('');
   const [errorBanner, setErrorBanner] = useState('');
 
@@ -2036,33 +2455,26 @@ const MasterEmployeeApp = ({ employees, setEmployees, departments, addLog }) => 
 
   const handleSubmit = (e) => {
     e.preventDefault();
+    const employeeData = {
+      nik,
+      name,
+      email,
+      department,
+      role,
+      username: username || name.toLowerCase().replace(/\s+/g, ''),
+      password: password || 'password123',
+      signature
+    };
+
     if (editingId) {
       const updatedEmployees = employees.map(emp => 
-        emp.id === editingId ? {
-          ...emp,
-          nik,
-          name,
-          email,
-          department,
-          role,
-          username: username || emp.username,
-          password: password || emp.password
-        } : emp
+        emp.id === editingId ? { ...emp, ...employeeData, password: password || emp.password } : emp
       );
       setEmployees(updatedEmployees);
       addLog('UPDATE', 'Master Karyawan', name);
       setSuccessBanner('Data karyawan berhasil diperbarui.');
     } else {
-      const newEmp = { 
-        id: Date.now(), 
-        nik, 
-        name, 
-        email, 
-        department, 
-        role,
-        username: username || name.toLowerCase().replace(/\s+/g, ''), 
-        password: password || 'password123'
-      };
+      const newEmp = { ...employeeData, id: Date.now() };
       setEmployees([newEmp, ...employees]);
       addLog('CREATE', 'Master Karyawan', name);
       setSuccessBanner('Data karyawan baru berhasil ditambahkan.');
@@ -2071,6 +2483,7 @@ const MasterEmployeeApp = ({ employees, setEmployees, departments, addLog }) => 
     setNik(''); setName(''); setEmail(''); 
     setDepartment(''); setRole('Staff');
     setUsername(''); setPassword('');
+    setSignature('');
     setIsFormOpen(false);
     setEditingId(null);
     setTimeout(() => setSuccessBanner(''), 4000);
@@ -2158,6 +2571,42 @@ const MasterEmployeeApp = ({ employees, setEmployees, departments, addLog }) => 
     e.target.value = ''; 
   };
 
+  const handleSignatureUpload = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const MAX_SIZE = 500;
+          let width = img.width;
+          let height = img.height;
+
+          if (width > height) {
+            if (width > MAX_SIZE) {
+              height *= MAX_SIZE / width;
+              width = MAX_SIZE;
+            }
+          } else {
+            if (height > MAX_SIZE) {
+              width *= MAX_SIZE / height;
+              height = MAX_SIZE;
+            }
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+          setSignature(canvas.toDataURL('image/png'));
+        };
+        img.src = event.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   const handleEditClick = (emp) => {
     setEditingId(emp.id);
     setNik(emp.nik);
@@ -2167,6 +2616,7 @@ const MasterEmployeeApp = ({ employees, setEmployees, departments, addLog }) => 
     setRole(emp.role);
     setUsername(emp.username || '');
     setPassword(''); // Kosongkan, isi hanya jika ingin mengganti
+    setSignature(emp.signature || '');
     setIsFormOpen(true);
   };
 
@@ -2285,6 +2735,25 @@ const MasterEmployeeApp = ({ employees, setEmployees, departments, addLog }) => 
             </div>
           </div>
 
+          <div className="border-t border-slate-100 md:col-span-2 my-2 pt-4">
+            <h4 className="font-bold text-slate-800 text-sm mb-2">Tanda Tangan Digital</h4>
+            <div className="flex items-center gap-4">
+              <label className="flex flex-col items-center justify-center border-2 border-dashed border-slate-300 hover:border-blue-500 rounded-lg p-4 cursor-pointer transition-colors bg-slate-50 w-full md:w-1/2">
+                <input type="file" accept="image/*" onChange={handleSignatureUpload} className="hidden" />
+                {signature ? (
+                  <img src={signature} alt="Signature Preview" className="h-16 object-contain" />
+                ) : (
+                  <div className="text-center">
+                    <ImageIcon className="w-8 h-8 text-slate-400 mx-auto mb-1" />
+                    <span className="text-xs text-slate-600 font-semibold block">Klik untuk Unggah Spesimen Tanda Tangan</span>
+                    <span className="text-[10px] text-slate-400">Dimensi akan di-resize otomatis ke 500px</span>
+                  </div>
+                )}
+              </label>
+              {signature && <button type="button" onClick={() => setSignature('')} className="text-xs text-red-500 hover:underline">Hapus Signature</button>}
+            </div>
+          </div>
+
           <div className="col-span-2 flex justify-end">
             <button type="submit" className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-md font-medium transition-colors shadow-sm">{editingId ? 'Update Data Karyawan' : 'Simpan Karyawan'}</button>
           </div>
@@ -2297,6 +2766,7 @@ const MasterEmployeeApp = ({ employees, setEmployees, departments, addLog }) => 
             <tr>
               <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">NIK / Nama / Username</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Email</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Sign</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Departemen</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Role / Posisi</th>
               <th className="px-6 py-3 text-right text-xs font-medium text-slate-500 uppercase">Aksi</th>
@@ -2311,6 +2781,9 @@ const MasterEmployeeApp = ({ employees, setEmployees, departments, addLog }) => 
                   <div className="text-[10px] text-blue-600 font-mono bg-blue-50 px-1 py-0.5 rounded inline-block mt-1">Username: {d.username || d.name.toLowerCase().replace(/\s+/g, '')}</div>
                 </td>
                 <td className="px-6 py-4 text-sm text-slate-500">{d.email}</td>
+                <td className="px-6 py-4">
+                  {d.signature ? <img src={d.signature} alt="Sign" className="h-8 w-auto border border-slate-200 rounded bg-white" /> : <span className="text-[10px] text-slate-300 italic">No Sign</span>}
+                </td>
                 <td className="px-6 py-4 text-sm text-slate-500">{d.department}</td>
                 <td className="px-6 py-4 text-sm text-slate-500"><span className="bg-slate-100 text-slate-700 px-2 py-1 rounded text-xs font-semibold">{d.role === 'administrator' ? 'Administrator' : d.role}</span></td>
                 <td className="px-6 py-4 text-right">
@@ -2321,6 +2794,121 @@ const MasterEmployeeApp = ({ employees, setEmployees, departments, addLog }) => 
                       addLog('DELETE', 'Master Karyawan', d.name);
                     }} className="text-red-600 hover:text-red-900 bg-red-50 p-2 rounded transition-colors" title="Hapus"><Trash2 className="w-4 h-4 inline" /></button>
                   </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
+// --- MASTER GL ACCOUNT & COST CENTER COMPONENTS ---
+const MasterGenericApp = ({ title, apiPath, data, setData, addLog, user, templateFields }) => {
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [code, setCode] = useState('');
+  const [name, setName] = useState('');
+  const [description, setDesc] = useState('');
+  const [msg, setMsg] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    const payload = { code, name, description, modify_by: user.name };
+    setIsLoading(true);
+    try {
+      const url = editingId ? `${API_BASE_URL}/${apiPath}/${editingId}` : `${API_BASE_URL}/${apiPath}`;
+      const res = await fetch(url, {
+        method: editingId ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) {
+        const result = await res.json();
+        if (editingId) {
+          setData(prev => prev.map(d => d.id === editingId ? { ...payload, id: editingId, modify_date: new Date().toISOString() } : d));
+          addLog('UPDATE', title, name);
+        } else {
+          setData(prev => [{ ...payload, id: result.id, modify_date: new Date().toISOString() }, ...prev]);
+          addLog('CREATE', title, name);
+        }
+        setMsg('Data berhasil disimpan.');
+        setIsFormOpen(false); setEditingId(null); setCode(''); setName(''); setDesc('');
+        setTimeout(() => setMsg(''), 3000);
+      }
+    } catch (err) { console.error(err); }
+    finally { setIsLoading(false); }
+  };
+
+  const handleImport = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      const lines = evt.target.result.split(/\r?\n/).filter(l => l.trim().length > 0);
+      if (lines.length <= 1) return;
+      const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+      for (let i = 1; i < lines.length; i++) {
+        const cols = lines[i].split(',').map(c => c.trim());
+        const row = {}; headers.forEach((h, idx) => row[h] = cols[idx]);
+        if (row.code && row.name) {
+          await fetch(`${API_BASE_URL}/${apiPath}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...row, modify_by: user.name })
+          });
+        }
+      }
+      window.location.reload(); // Refresh sederhana untuk tarik data baru
+    };
+    reader.readAsText(file);
+  };
+
+  return (
+    <div className="p-6">
+      <div className="flex justify-between items-center mb-6">
+        <div><h2 className="text-2xl font-bold text-slate-800">{title}</h2><p className="text-sm text-slate-500">Kelola daftar referensi {title} perusahaan.</p></div>
+        <div className="flex gap-2">
+          <button onClick={() => {
+            const csv = templateFields.join(',') + "\n" + templateFields.map(() => "value").join(',');
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `template_${apiPath}.csv`; a.click();
+          }} className="bg-emerald-600 text-white px-3 py-2 rounded-md text-xs font-bold">Template</button>
+          <label className="bg-amber-600 text-white px-3 py-2 rounded-md text-xs font-bold cursor-pointer">Import<input type="file" className="hidden" accept=".csv" onChange={handleImport}/></label>
+          <button onClick={() => setIsFormOpen(!isFormOpen)} className="bg-blue-600 text-white px-4 py-2 rounded-md text-sm font-medium">{isFormOpen ? 'Batal' : '+ Tambah'}</button>
+        </div>
+      </div>
+      {msg && <div className="mb-4 bg-green-50 text-green-700 p-3 rounded-lg border border-green-200 text-sm">{msg}</div>}
+      {isFormOpen && (
+        <form onSubmit={handleSubmit} className="bg-white p-6 rounded-lg shadow-sm border border-slate-200 mb-6 grid grid-cols-1 md:grid-cols-3 gap-4 items-end animate-fadeIn">
+          <div><label className="block text-xs font-bold text-slate-500 uppercase">Kode</label><input required value={code} onChange={e => setCode(e.target.value)} className="w-full px-3 py-2 border rounded-md" /></div>
+          <div><label className="block text-xs font-bold text-slate-500 uppercase">Nama</label><input required value={name} onChange={e => setName(e.target.value)} className="w-full px-3 py-2 border rounded-md" /></div>
+          <div><label className="block text-xs font-bold text-slate-500 uppercase">Keterangan</label><input value={description} onChange={e => setDesc(e.target.value)} className="w-full px-3 py-2 border rounded-md" /></div>
+          <button type="submit" disabled={isLoading} className="bg-green-600 text-white px-6 py-2 rounded-md font-bold hover:bg-green-700 disabled:bg-slate-300">
+            {isLoading ? '...' : 'Simpan'}
+          </button>
+        </form>
+      )}
+      <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-x-auto">
+        <table className="min-w-full divide-y divide-slate-200">
+          <thead className="bg-slate-50"><tr>
+            <th className="px-6 py-3 text-left text-xs font-bold text-slate-500 uppercase">Kode & Nama</th>
+            <th className="px-6 py-3 text-left text-xs font-bold text-slate-500 uppercase">Modifikasi</th>
+            <th className="px-6 py-3 text-right text-xs font-bold text-slate-500 uppercase">Aksi</th>
+          </tr></thead>
+          <tbody className="divide-y divide-slate-200">
+            {data.map(d => (
+              <tr key={d.id} className="hover:bg-slate-50 transition-colors">
+                <td className="px-6 py-4"><div className="text-sm font-bold text-slate-900">{d.code}</div><div className="text-xs text-slate-500">{d.name}</div></td>
+                <td className="px-6 py-4 text-xs text-slate-500 font-mono">
+                   <div>{d.modify_date ? new Date(d.modify_date).toLocaleString('id-ID') : '-'}</div>
+                   <div className="font-bold text-blue-600">{d.modify_by || 'System'}</div>
+                </td>
+                <td className="px-6 py-4 text-right">
+                  <button onClick={() => { setEditingId(d.id); setCode(d.code); setName(d.name); setDesc(d.description || ''); setIsFormOpen(true); }} className="text-blue-600 mr-3"><Edit2 className="w-4 h-4 inline"/></button>
+                  <button onClick={async () => { if(confirm('Hapus data?')) { await fetch(`${API_BASE_URL}/${apiPath}/${d.id}`, { method: 'DELETE' }); setData(data.filter(x => x.id !== d.id)); addLog('DELETE', title, d.name); } }} className="text-red-600"><Trash2 className="w-4 h-4 inline"/></button>
                 </td>
               </tr>
             ))}
@@ -2583,18 +3171,22 @@ const AuditLogApp = ({ logs }) => {
           <tbody className="divide-y divide-slate-200">
             {logs.map((log) => (
               <tr key={log.id} className="hover:bg-slate-50 transition-colors">
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-600">{log.modifyDate}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-slate-800">{log.modifyBy}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-600">
+                  {log.modify_date ? new Date(log.modify_date).toLocaleString('id-ID') : '-'}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-slate-800">{log.modify_by}</td>
                 <td className="px-6 py-4 whitespace-nowrap">
                   <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${
-                    log.actionType === 'CREATE' ? 'bg-green-100 text-green-700' :
-                    log.actionType === 'UPDATE' ? 'bg-blue-100 text-blue-700' : 
-                    log.actionType === 'DELETE' ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-700'
+                    log.action_type === 'CREATE' ? 'bg-green-100 text-green-700' :
+                    log.action_type === 'UPDATE' ? 'bg-blue-100 text-blue-700' : 
+                    log.action_type === 'DELETE' ? 'bg-red-100 text-red-700' : 
+                    log.action_type === 'LOGIN' ? 'bg-purple-100 text-purple-700' :
+                    'bg-slate-100 text-slate-700'
                   }`}>
-                    {log.actionType}
+                    {log.action_type}
                   </span>
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-600 font-medium">{log.menuAsal}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-600 font-medium">{log.menu_asal}</td>
                 <td className="px-6 py-4 text-sm text-slate-600">{log.description}</td>
               </tr>
             ))}
@@ -2672,27 +3264,49 @@ const RoleAccessManagerApp = ({ roleAccess, setRoleAccess, addLog }) => {
           <tbody className="bg-white divide-y divide-slate-200">
             {ALL_MENUS.map(menu => {
               return (
-                <tr key={menu.id} className="hover:bg-slate-50">
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="flex items-center">
-                      <span className="text-slate-500 mr-2">{menu.icon}</span>
-                      <span className="text-sm font-semibold text-slate-800">{menu.label}</span>
-                    </div>
-                  </td>
-                  {roles.map(role => {
-                    const isChecked = (roleAccess[role] || []).includes(menu.id);
-                    return (
+                <React.Fragment key={menu.id}>
+                  {/* Baris Menu Utama / Folder */}
+                  <tr className="hover:bg-slate-50 bg-slate-50/30">
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="flex items-center">
+                        <span className="text-slate-500 mr-2">{menu.icon}</span>
+                        <span className="text-sm font-bold text-slate-800">{menu.label}</span>
+                      </div>
+                    </td>
+                    {roles.map(role => (
                       <td key={role} className="px-6 py-4 text-center">
                         <input 
                           type="checkbox" 
-                          checked={isChecked}
+                          checked={(roleAccess[role] || []).includes(menu.id)}
                           onChange={() => handleCheckboxChange(role, menu.id)}
-                          className="w-5 h-5 text-blue-600 border-slate-300 rounded focus:ring-blue-500 cursor-pointer"
+                          className="w-5 h-5 text-blue-600 border-slate-300 rounded cursor-pointer"
                         />
                       </td>
-                    );
-                  })}
-                </tr>
+                    ))}
+                  </tr>
+                  
+                  {/* Baris Sub-Menu (Jika Ada) */}
+                  {menu.children && menu.children.map(child => (
+                    <tr key={child.id} className="hover:bg-slate-50">
+                      <td className="px-6 py-3 whitespace-nowrap pl-14">
+                        <div className="flex items-center text-slate-500 italic">
+                          <ChevronRight className="w-3 h-3 mr-2" />
+                          <span className="text-xs font-medium">{child.label}</span>
+                        </div>
+                      </td>
+                      {roles.map(role => (
+                        <td key={role} className="px-6 py-3 text-center">
+                          <input 
+                            type="checkbox" 
+                            checked={(roleAccess[role] || []).includes(child.id)}
+                            onChange={() => handleCheckboxChange(role, child.id)}
+                            className="w-4 h-4 text-blue-500 border-slate-300 rounded cursor-pointer"
+                          />
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </React.Fragment>
               );
             })}
           </tbody>
@@ -2713,6 +3327,7 @@ const RoleAccessManagerApp = ({ roleAccess, setRoleAccess, addLog }) => {
 // --- LAYOUT UTAMA DASHBOARD ---
 const DashboardLayout = ({ user, onLogout, children, activeMenu, setActiveMenu, roleAccess, approvals = [] }) => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth > 1024);
+  const [openSubmenus, setOpenSubmenus] = useState({ master_maintain: true });
 
   useEffect(() => {
     const handleResize = () => {
@@ -2725,10 +3340,17 @@ const DashboardLayout = ({ user, onLogout, children, activeMenu, setActiveMenu, 
 
   const userAllowedMenus = roleAccess[user.role] || [];
   
-  const filteredMenuItems = ALL_MENUS.filter(item => {
-    if (user.role === 'administrator' && item.id === 'master_role_access') return true;
-    return userAllowedMenus.includes(item.id);
-  });
+  const filteredMenuItems = ALL_MENUS.map(item => {
+    if (item.children) {
+      const filteredChildren = item.children.filter(child => userAllowedMenus.includes(child.id));
+      if (filteredChildren.length > 0) return { ...item, children: filteredChildren };
+      return null;
+    }
+    if (userAllowedMenus.includes(item.id) || (user.role === 'administrator' && item.id === 'master_role_access')) {
+      return item;
+    }
+    return null;
+  }).filter(Boolean);
 
   const pendingCount = approvals.filter(a => {
     if (a.status !== 'Pending') return false;
@@ -2771,42 +3393,75 @@ const DashboardLayout = ({ user, onLogout, children, activeMenu, setActiveMenu, 
 
         <nav className="flex-1 py-4 flex flex-col gap-2 px-2 overflow-y-auto">
           {filteredMenuItems.map((item) => {
-            const isApprovalMenu = item.id === 'dashboard_approval';
-            const showNotification = isApprovalMenu && pendingCount > 0;
+            const hasChildren = item.children && item.children.length > 0;
+            const isSubOpen = openSubmenus[item.id];
+            const showNotification = item.id === 'dashboard_approval' && pendingCount > 0;
 
             return (
-              <button
-                key={item.id}
-                onClick={() => {
-                  setActiveMenu(item.id);
-                  if (window.innerWidth < 1024) setIsSidebarOpen(false);
-                }}
-                className={`flex items-center justify-between px-3 py-3 rounded-md transition-colors w-full ${
-                  activeMenu === item.id ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'
-                }`}
-              >
-                <div className="flex items-center min-w-0">
-                  <span className="shrink-0 relative">
-                    {item.icon}
-                    {showNotification && !isSidebarOpen && (
-                      <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                        <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"></span>
-                      </span>
-                    )}
-                  </span>
-                  {isSidebarOpen && <span className="ml-3 text-sm font-medium truncate">{item.label}</span>}
-                </div>
-
-                {showNotification && isSidebarOpen && (
-                  <div className="flex items-center gap-1 shrink-0">
-                    <Bell className="w-3.5 h-3.5 text-red-400 animate-bounce" />
-                    <span className="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">
-                      {pendingCount}
+              <div key={item.id} className="flex flex-col gap-1">
+                <button
+                  onClick={() => {
+                    if (hasChildren) {
+                      setOpenSubmenus(prev => ({ ...prev, [item.id]: !prev[item.id] }));
+                    } else {
+                      setActiveMenu(item.id);
+                      if (window.innerWidth < 1024) setIsSidebarOpen(false);
+                    }
+                  }}
+                  className={`flex items-center justify-between px-3 py-2.5 rounded-md transition-colors w-full ${
+                    activeMenu === item.id ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+                  }`}
+                >
+                  <div className="flex items-center min-w-0">
+                    <span className="shrink-0 relative">
+                      {item.icon}
+                      {showNotification && !isSidebarOpen && (
+                        <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"></span>
+                        </span>
+                      )}
                     </span>
+                    {isSidebarOpen && <span className="ml-3 text-sm font-medium truncate">{item.label}</span>}
+                  </div>
+
+                  {isSidebarOpen && (
+                    <div className="flex items-center gap-2">
+                      {showNotification && (
+                        <span className="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                          {pendingCount}
+                        </span>
+                      )}
+                      {hasChildren && (
+                        <ChevronDown className={`w-4 h-4 transition-transform ${isSubOpen ? 'rotate-180' : ''}`} />
+                      )}
+                    </div>
+                  )}
+                </button>
+
+                {/* Sub Menu Items (Tree View) */}
+                {hasChildren && isSubOpen && isSidebarOpen && (
+                  <div className="ml-6 flex flex-col gap-1 border-l border-slate-800 pl-2 mt-1 animate-fadeIn">
+                    {item.children.map(child => (
+                      <button
+                        key={child.id}
+                        onClick={() => {
+                          setActiveMenu(child.id);
+                          if (window.innerWidth < 1024) setIsSidebarOpen(false);
+                        }}
+                        className={`flex items-center px-3 py-2 rounded-md text-xs font-medium transition-all ${
+                          activeMenu === child.id 
+                            ? 'bg-blue-600/20 text-blue-400 border border-blue-600/50' 
+                            : 'text-slate-500 hover:text-white hover:bg-slate-800'
+                        }`}
+                      >
+                        <span className="shrink-0 scale-75 opacity-70">{child.icon}</span>
+                        <span className="ml-2 truncate">{child.label}</span>
+                      </button>
+                    ))}
                   </div>
                 )}
-              </button>
+              </div>
             );
           })}
         </nav>
@@ -2824,13 +3479,24 @@ const DashboardLayout = ({ user, onLogout, children, activeMenu, setActiveMenu, 
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        <header className="h-16 bg-white shadow-sm flex items-center px-6 shrink-0">
-          <button onClick={() => setIsSidebarOpen(true)} className="lg:hidden p-2 mr-4 bg-slate-100 rounded-lg text-slate-600">
-            <Menu className="w-5 h-5" />
+        <header className="h-16 bg-white shadow-sm flex items-center justify-between px-4 sm:px-6 shrink-0 border-b border-slate-100">
+          <div className="flex items-center min-w-0">
+            <button onClick={() => setIsSidebarOpen(true)} className="lg:hidden p-2 mr-3 bg-slate-50 border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-100">
+              <Menu className="w-5 h-5" />
+            </button>
+            <h1 className="text-lg sm:text-xl font-bold text-slate-800 truncate tracking-tight">
+              {ALL_MENUS.find(m => m.id === activeMenu)?.label || 'Dashboard'}
+            </h1>
+          </div>
+
+          {/* Tombol Logout Khusus Mobile */}
+          <button 
+            onClick={onLogout}
+            className="lg:hidden flex items-center gap-2 bg-rose-50 text-rose-600 hover:bg-rose-100 px-3 py-1.5 rounded-lg border border-rose-100 transition-all text-xs font-bold"
+          >
+            <LogOut className="w-4 h-4" />
+            <span>Keluar</span>
           </button>
-          <h1 className="text-xl font-semibold text-slate-800">
-            {ALL_MENUS.find(m => m.id === activeMenu)?.label || 'Dashboard'}
-          </h1>
         </header>
         <main className="flex-1 overflow-auto bg-slate-100">
           {children}
@@ -2841,36 +3507,104 @@ const DashboardLayout = ({ user, onLogout, children, activeMenu, setActiveMenu, 
 };
 
 export default function App() {
-  const [currentView, setCurrentView] = useState('portal');
-  const [activeDashboardMenu, setActiveDashboardMenu] = useState('dashboard_home');
-  const [user, setUser] = useState(null);
+  // Inisialisasi State dengan pengecekan LocalStorage untuk persistensi sesi
+  const [user, setUser] = useState(() => {
+    const savedUser = localStorage.getItem('corp_user');
+    const lastActivity = localStorage.getItem('corp_last_activity');
+    
+    if (savedUser && lastActivity) {
+      const now = Date.now();
+      // Jika selisih waktu sekarang dengan aktivitas terakhir kurang dari 30 menit
+      if (now - parseInt(lastActivity) < INACTIVITY_TIMEOUT) {
+        return JSON.parse(savedUser);
+      }
+    }
+    // Bersihkan storage jika sesi sudah kadaluwarsa atau tidak ada
+    localStorage.removeItem('corp_user');
+    localStorage.removeItem('corp_last_activity');
+    localStorage.removeItem('corp_active_menu');
+    return null;
+  });
+
+  const [currentView, setCurrentView] = useState(user ? 'dashboard' : 'portal');
   
-  const [news, setNews] = useState(INITIAL_NEWS);
-  const [procedures, setProcedures] = useState(INITIAL_PROCEDURES); // State Berkas Prosedur
-  const [approvals, setApprovals] = useState(INITIAL_APPROVALS);
-  const [routings, setRoutings] = useState(INITIAL_ROUTING);
+  const [activeDashboardMenu, setActiveDashboardMenu] = useState(() => {
+    return localStorage.getItem('corp_active_menu') || 'dashboard_home';
+  });
   
-  const [departments, setDepartments] = useState(INITIAL_DEPARTMENTS);
-  const [approvalTypes, setApprovalTypes] = useState(INITIAL_APPROVAL_TYPES);
-  const [employees, setEmployees] = useState(INITIAL_EMPLOYEES);
+  const [news, setNews] = useState([]);
+  const [procedures, setProcedures] = useState([]);
+  const [approvals, setApprovals] = useState([]);
+  const [routings, setRoutings] = useState([]);
+  const [departments, setDepartments] = useState([]);
+  const [approvalTypes, setApprovalTypes] = useState([]);
+  const [employees, setEmployees] = useState([]);
+  const [glAccounts, setGlAccounts] = useState([]);
+  const [costCenters, setCostCenters] = useState([]);
+  const [events, setEvents] = useState([]);
+
+  // Sinkronisasi Data dari Database saat App dimuat
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        // Mengambil data dari Firestore
+        const snapshotNews = await getDocs(query(collection(db, "news"), orderBy("date", "desc")));
+        setNews(snapshotNews.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+
+        const snapshotEmps = await getDocs(collection(db, "employees"));
+        setEmployees(snapshotEmps.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+
+        const snapshotApprovals = await getDocs(query(collection(db, "approvals"), orderBy("date", "desc")));
+        setApprovals(snapshotApprovals.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+
+        // Ambil koleksi lainnya dengan cara yang sama...
+        const snapshotDepts = await getDocs(collection(db, "departments"));
+        setDepartments(snapshotDepts.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+
+        const snapshotLogs = await getDocs(query(collection(db, "audit_logs"), orderBy("modify_date", "desc"), limit(100)));
+        setAuditLogs(snapshotLogs.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+
+      } catch (err) {
+        console.error("Gagal mengambil data dari Firebase:", err);
+      }
+    };
+    fetchData();
+  }, []);
+
+  // Sinkronisasi Menu Dashboard yang sedang aktif ke LocalStorage
+  useEffect(() => {
+    if (user && activeDashboardMenu) {
+      localStorage.setItem('corp_active_menu', activeDashboardMenu);
+    }
+  }, [activeDashboardMenu, user]);
 
   const [roleAccess, setRoleAccess] = useState(INITIAL_ROLE_ACCESS);
   const [auditLogs, setAuditLogs] = useState([]);
 
-  const addLog = (actionType, menuAsal, entityName) => {
-    const newLog = {
-      id: Date.now(),
-      modifyDate: new Date().toLocaleString('id-ID'),
-      modifyBy: user ? user.name : 'System',
-      actionType, // 'CREATE', 'UPDATE', 'DELETE'
-      menuAsal,
-      description: `${actionType} pada ${menuAsal}: ${entityName}`
+  const addLog = async (actionType, menuAsal, entityName) => {
+    const logData = {
+      modify_by: user ? user.name : 'System',
+      action_type: actionType,
+      menu_asal: menuAsal,
+      description: `${actionType} pada ${menuAsal}: ${entityName}`,
+      modify_date: new Date().toISOString()
     };
-    setAuditLogs(prev => [newLog, ...prev]);
+
+    try {
+      const docRef = await addDoc(collection(db, "audit_logs"), logData);
+      setAuditLogs(prev => [{ ...logData, id: docRef.id }, ...prev]);
+    } catch (err) {
+      console.error("Gagal mencatat log ke database", err);
+    }
   };
 
   const handleLoginSuccess = (userData) => {
     setUser(userData);
+    // Simpan data login ke storage
+    localStorage.setItem('corp_user', JSON.stringify(userData));
+    localStorage.setItem('corp_last_activity', Date.now().toString());
+    localStorage.setItem('corp_active_menu', 'dashboard_home');
+
     addLog('LOGIN', 'User Session', userData.name);
     setCurrentView('dashboard');
     setActiveDashboardMenu('dashboard_home');
@@ -2878,6 +3612,9 @@ export default function App() {
 
   const handleLogout = () => {
     setUser(null);
+    localStorage.removeItem('corp_user');
+    localStorage.removeItem('corp_last_activity');
+    localStorage.removeItem('corp_active_menu');
     setCurrentView('portal');
   };
 
@@ -2890,6 +3627,10 @@ export default function App() {
 
     const resetTimer = () => {
       if (timeoutId) clearTimeout(timeoutId);
+      
+      // Perbarui timestamp aktivitas di storage agar sesi tetap hidup saat refresh
+      localStorage.setItem('corp_last_activity', Date.now().toString());
+
       // Set timer untuk memicu auto logout
       timeoutId = setTimeout(() => {
         handleLogout();
@@ -2982,12 +3723,26 @@ export default function App() {
             user={user}
             approvalTypes={approvalTypes}
             routings={routings}
+            glAccounts={glAccounts}
+            costCenters={costCenters}
+            employees={employees}
             addLog={addLog}
           />
+        )}
+        {activeDashboardMenu === 'dashboard_event' && (
+          <EventManagerApp events={events} setEvents={setEvents} addLog={addLog} user={user} />
         )}
         
         {activeDashboardMenu === 'master_department' && (
           <MasterDepartmentApp departments={departments} setDepartments={setDepartments} addLog={addLog} />
+        )}
+        {activeDashboardMenu === 'master_gl_account' && (
+          <MasterGenericApp title="Master GL Account" apiPath="gl-accounts" data={glAccounts} setData={setGlAccounts} 
+            addLog={addLog} user={user} templateFields={['code', 'name', 'description']} />
+        )}
+        {activeDashboardMenu === 'master_cost_center' && (
+          <MasterGenericApp title="Master Cost Center" apiPath="cost-centers" data={costCenters} setData={setCostCenters} 
+            addLog={addLog} user={user} templateFields={['code', 'name', 'description']} />
         )}
         {activeDashboardMenu === 'master_approval_type' && (
           <MasterApprovalTypeApp approvalTypes={approvalTypes} setApprovalTypes={setApprovalTypes} addLog={addLog} />
@@ -3024,6 +3779,7 @@ export default function App() {
       news={news} 
       procedures={procedures} 
       departments={departments}
+      events={events}
       onNavigate={() => setCurrentView('portal')} 
       // Mengarahkan ke halaman login yang memiliki keamanan CAPTCHA baru
       onLoginClick={() => setCurrentView('login')} 
